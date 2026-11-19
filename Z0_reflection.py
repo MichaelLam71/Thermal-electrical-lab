@@ -31,8 +31,8 @@ EXCLUDE = {
 # Task 2.4c, direct method: fill in after the lab. Turn the potentiometer until the
 # echo at node 20 vanishes and measure it (switch down): Z0_DIRECT. Then find the
 # lowest and highest settings where the echo is still invisible: NULL_RANGE.
-Z0_DIRECT = None          # e.g. 148.0  (ohm)
-NULL_RANGE = None         # e.g. (140.0, 156.0)  (ohm)
+Z0_DIRECT = 147.0         # measured 19 Nov: echo vanished at 147 ohm (switch down, multimeter)
+NULL_RANGE = None         # not measured (echo grows continuously); if None, uses 1% meter accuracy
 
 NODE = 20
 T_SECTION = 2.2          # us per section (from Task 2.3)
@@ -45,11 +45,19 @@ def cross(t, v, level, start=0):
 
 
 def measure(path):
-    d = np.loadtxt(path, delimiter=",", skiprows=1)
-    t, c1, c2 = (d[:, 0] - d[0, 0]) * 1e6, d[:, 1], d[:, 2]
-    b1, b2 = np.median(c1[t < 60]), np.median(c2[t < 60])          # baselines
-    t1 = cross(t, c1, b1 + 1.25)                                   # pulse starts at node 0
-    t2 = cross(t, c2, b2 + 1.25, np.searchsorted(t, t1))           # reaches node 20
+    """Works with files containing CH1 and CH2, or CH2 only (time, CH2)."""
+    d = np.genfromtxt(path, delimiter=",", skip_header=1)
+    d = d[~np.isnan(d).any(axis=1)]
+    t = (d[:, 0] - d[0, 0]) * 1e6
+    c2 = d[:, -1]                                                  # CH2 is always the last column
+    b2 = np.median(c2[: len(c2) // 10])                            # baseline before the pulse
+    if d.shape[1] >= 3:                                            # CH1 present: start search after
+        c1 = d[:, 1]                                               # the pulse leaves node 0
+        b1 = np.median(c1[: len(c1) // 10])
+        start = np.searchsorted(t, cross(t, c1, b1 + 1.25))
+    else:
+        start = 0
+    t2 = cross(t, c2, b2 + 1.25, start)                            # pulse reaches node 20
     t_echo = t2 + 2 * (40 - NODE) * T_SECTION                      # echo back at node 20
     flat = lambda a: np.mean(c2[(t >= a + 15) & (t < a + 40)]) - b2  # middle of the pulse
     return t, c2, t2, t_echo, flat(t2), flat(t_echo)
@@ -85,8 +93,9 @@ print(f"Difference = {abs(Z0 - Z0_th):.1f} ohm = "
 
 if Z0_DIRECT is not None:
     sZ0_dir = 0.5 * (NULL_RANGE[1] - NULL_RANGE[0]) if NULL_RANGE else 0.01 * Z0_DIRECT
-    print(f"\nDirect null measurement: Z0 = {Z0_DIRECT:.0f} ± {sZ0_dir:.0f} ohm "
-          f"(half the range where the echo is invisible)")
+    how = ("half the range where the echo is invisible" if NULL_RANGE
+           else "multimeter accuracy only, 1%")
+    print(f"\nDirect null measurement: Z0 = {Z0_DIRECT:.0f} ± {sZ0_dir:.1f} ohm ({how})")
     for name, val, err in [("fit", Z0, sZ0_tot), ("theory", Z0_th, sZ0_th)]:
         print(f"  vs {name}: difference {abs(Z0_DIRECT - val):.1f} ohm = "
               f"{abs(Z0_DIRECT - val) / np.hypot(sZ0_dir, err):.2f} combined standard deviations")
